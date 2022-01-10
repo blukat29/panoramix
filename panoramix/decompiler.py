@@ -155,9 +155,9 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
             if target > 1 and loader.lines[target][1] == "jumpdest":
                 target += 1
 
-            @timeout_decorator.timeout(60 * 3, timeout_exception=TimeoutInterrupt)
+            @timeout_decorator.timeout(60 * 10, timeout_exception=TimeoutInterrupt)
             def dec():
-                trace = VM(loader).run(target, stack=stack, timeout=60)
+                trace = VM(loader).run(target, stack=stack, timeout=60 * 8)
                 explain("Initial decompiled trace", trace[1:])
 
                 if "--explain" in sys.argv:
