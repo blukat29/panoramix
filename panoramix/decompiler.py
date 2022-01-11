@@ -51,6 +51,41 @@ def decompile_address(address: str, only_func_name=None) -> Decompilation:
     return _decompile_with_loader(loader, only_func_name)
 
 
+def _trace_function(loader, hash, fname, target, stack):
+    logger.info("Start func %s %s %s", hash, fname, target)
+    logger.debug("stack %s", stack)
+
+    try:
+        if target > 1 and loader.lines[target][1] == "jumpdest":
+            target += 1
+
+        @timeout_decorator.timeout(60 * 2, timeout_exception=TimeoutInterrupt)
+        def dec():
+            trace = VM(loader).run(target, stack=stack, timeout=60)
+            explain("Initial decompiled trace", trace[1:])
+
+            if "--explain" in sys.argv:
+                trace = rewrite_trace(
+                        trace, lambda line: [] if type(line) == str else [line]
+                        )
+                explain("Without assembly", trace)
+
+            trace = make_whiles(trace)
+            explain("final", trace)
+
+            if "--explain" in sys.argv:
+                explain("folded", folder.fold(trace))
+
+            return trace
+
+        trace = dec()
+        logger.info("Trace func %s %s %s", hash, fname, target)
+        return (trace, True)
+
+    except (Exception, TimeoutInterrupt):
+        logger.exception("Error func %s %s %s", hash, fname, target)
+        return (None, False)
+
 def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
 
     """
@@ -137,7 +172,6 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
     functions = {}
 
     for (hash, fname, target, stack) in loader.func_list:
-        logger.warning("Func %s %s %s", hash, fname, target)
         """
             hash contains function hash
             fname contains function name
@@ -149,41 +183,11 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
             # skip all the functions that are not it
             continue
 
-        logger.info("Parsing %s...", fname)
-        logger.debug("stack %s", stack)
-
-        try:
-            if target > 1 and loader.lines[target][1] == "jumpdest":
-                target += 1
-
-            @timeout_decorator.timeout(60 * 10, timeout_exception=TimeoutInterrupt)
-            def dec():
-                trace = VM(loader).run(target, stack=stack, timeout=60 * 2)
-                explain("Initial decompiled trace", trace[1:])
-
-                if "--explain" in sys.argv:
-                    trace = rewrite_trace(
-                        trace, lambda line: [] if type(line) == str else [line]
-                    )
-                    explain("Without assembly", trace)
-
-                trace = make_whiles(trace)
-                explain("final", trace)
-
-                if "--explain" in sys.argv:
-                    explain("folded", folder.fold(trace))
-
-                return trace
-
-            trace = dec()
-
+        trace, ok = _trace_function(loader, hash, fname, target, stack)
+        if ok:
             functions[hash] = Function(hash, trace)
-
-        except (Exception, TimeoutInterrupt):
+        else:
             problems[hash] = fname
-
-            logger.exception("Problem with %s%s", fname, C.end)
-
             if "--strict" in sys.argv:
                 raise
 
@@ -305,4 +309,5 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
     decompilation.text = text_output.getvalue()
     text_output.close()
 
+    logger.info("Wrapped up decompilation")
     return decompilation

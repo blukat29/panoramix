@@ -2,17 +2,26 @@
 
 # Install deps:
 #   apt install python3.8 python3.8-pip
-#   python3.8 -m pip install timeout_decorator appdirs dataclasses
+#   python3.8 -m pip install timeout_decorator appdirs dataclasses coloredlogs
 
 # Run this:
 #   python3.8 test.py -f test/klay-0x68da33c27a898796e6dcbb9617a34f78c3ec7a55.txt
 
 import argparse
-import sys
 import json
 import logging
+import sys
+
+import coloredlogs
 
 from panoramix import decompiler
+
+coloredlogs.install(
+    level=logging.INFO,
+    fmt="%(asctime)s %(name)s %(message)s",
+    datefmt="%H:%M:%S.%f",
+    field_styles={"asctime": {"color": "white", "faint": True}},
+)
 
 def deco_code(code):
     code = code.strip()
