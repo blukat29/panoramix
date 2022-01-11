@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import sys
+import traceback
 from contextlib import redirect_stdout
+from multiprocessing import Pool
 
 import timeout_decorator
 
@@ -13,9 +15,9 @@ from panoramix.contract import Contract
 from panoramix.function import Function
 from panoramix.loader import Loader
 from panoramix.prettify import explain, pprint_repr, pprint_trace, pretty_type
+from panoramix.utils.helpers import C, rewrite_trace
 from panoramix.vm import VM
 from panoramix.whiles import make_whiles
-from panoramix.utils.helpers import C, rewrite_trace
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +82,58 @@ def _trace_function(loader, hash, fname, target, stack):
 
         trace = dec()
         logger.info("Trace func %s %s %s", hash, fname, target)
-        return (trace, True)
+        return (hash, fname, trace)
 
-    except (Exception, TimeoutInterrupt):
-        logger.exception("Error func %s %s %s", hash, fname, target)
-        return (None, False)
+    except TimeoutInterrupt:
+        logger.error("Error func %s %s %s - timeout", hash, fname, target)
+        return (hash, fname, None)
+
+    except Exception as e:
+        logger.error("Error func %s %s %s - exception\n%s", hash, fname, target, traceback.format_exc())
+        return (hash, fname, None)
+
+def _trace_multiproc_child(arg):
+    loader, hash, fname, target, stack = arg
+    return _trace_function(loader, hash, fname, target, stack)
+
+def _trace_multiproc_parent(loader, only_func_name=None):
+    functions = {}
+    problems = {}
+
+    args = []
+
+    for (hash, fname, target, stack) in loader.func_list:
+        """
+            hash contains function hash
+            fname contains function name
+            target contains line# for the given function
+        """
+        if only_func_name is not None and not fname.startswith(only_func_name):
+            # if user provided a function_name in command line,
+            # skip all the functions that are not it
+            continue
+        args.append( (loader, hash, fname, target, stack) )
+
+    pool = Pool(processes=8)
+    outs = pool.map(_trace_multiproc_child, args)
+    #result = pool.map_async(_trace_multiproc_child, args)
+    #try:
+    #    outs = result.get(timeout=60*5)
+    #except multiprocessing.context.TimeoutError:
+    #    logger.exception("Multiproc tracer timed out")
+    #    raise
+
+    for out in outs:
+        hash, fname, trace = out
+        if trace is not None:
+            functions[hash] = Function(hash, trace)
+        else:
+            problems[hash] = fname
+            if "--strict" in sys.argv:
+                raise
+
+    return functions, problems
+
 
 def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
 
@@ -168,28 +217,7 @@ def _decompile_with_loader(loader, only_func_name=None) -> Decompilation:
 
     """
 
-    problems = {}
-    functions = {}
-
-    for (hash, fname, target, stack) in loader.func_list:
-        """
-            hash contains function hash
-            fname contains function name
-            target contains line# for the given function
-        """
-
-        if only_func_name is not None and not fname.startswith(only_func_name):
-            # if user provided a function_name in command line,
-            # skip all the functions that are not it
-            continue
-
-        trace, ok = _trace_function(loader, hash, fname, target, stack)
-        if ok:
-            functions[hash] = Function(hash, trace)
-        else:
-            problems[hash] = fname
-            if "--strict" in sys.argv:
-                raise
+    functions, problems = _trace_multiproc_parent(loader, only_func_name)
 
     logger.info("Functions decompilation finished, now doing post-processing.")
 
