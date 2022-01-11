@@ -16,10 +16,14 @@ from panoramix.function import Function
 from panoramix.loader import Loader
 from panoramix.prettify import explain, pprint_repr, pprint_trace, pretty_type
 from panoramix.utils.helpers import C, rewrite_trace
-from panoramix.vm import VM
+from panoramix.vm import VM, MAX_NODE_COUNT
 from panoramix.whiles import make_whiles
 
 logger = logging.getLogger(__name__)
+
+TRACE_FUNC_TIMEOUT = 60*5
+TRACE_VM_TIMEOUT = 60*4
+TRACE_PROCESSES = 8
 
 
 @dataclasses.dataclass
@@ -61,9 +65,9 @@ def _trace_function(loader, hash, fname, target, stack):
         if target > 1 and loader.lines[target][1] == "jumpdest":
             target += 1
 
-        @timeout_decorator.timeout(60 * 2, timeout_exception=TimeoutInterrupt)
+        @timeout_decorator.timeout(TRACE_FUNC_TIMEOUT, timeout_exception=TimeoutInterrupt)
         def dec():
-            trace = VM(loader).run(target, stack=stack, timeout=60)
+            trace = VM(loader).run(target, stack=stack, timeout=TRACE_VM_TIMEOUT)
             explain("Initial decompiled trace", trace[1:])
 
             if "--explain" in sys.argv:
@@ -97,6 +101,9 @@ def _trace_multiproc_child(arg):
     return _trace_function(loader, hash, fname, target, stack)
 
 def _trace_multiproc_parent(loader, only_func_name=None):
+    logger.info("Max node  %i, per-function timeout %i, processes %i",
+            MAX_NODE_COUNT, TRACE_FUNC_TIMEOUT, TRACE_PROCESSES)
+
     functions = {}
     problems = {}
 
@@ -114,7 +121,7 @@ def _trace_multiproc_parent(loader, only_func_name=None):
             continue
         args.append( (loader, hash, fname, target, stack) )
 
-    pool = Pool(processes=8)
+    pool = Pool(processes=TRACE_PROCESSES)
     outs = pool.map(_trace_multiproc_child, args)
     #result = pool.map_async(_trace_multiproc_child, args)
     #try:
