@@ -267,9 +267,9 @@ class VM(EasyCopy):
 
         if should_quit():
             logger.warning(
-                "VM stopped prematurely. Node count %i and seconds %i.",
-                node_count,
-                time.monotonic() - time_start,
+                "VM stopped prematurely. start=%i Node count %i/%i and seconds %i/%i.",
+                start, node_count, MAX_NODE_COUNT,
+                time.monotonic() - time_start, timeout
             )
 
         tr = root.make_trace()
